@@ -54,9 +54,12 @@ def test_to_mask_merges_overlapping_segments():
     assert frames(p.to_mask([(0.0, 0.5), (0.25, 0.75)], 100)) == list(range(75))
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题 #7：结束时间为负时，负切片会把大半 mask 置真")
 def test_to_mask_ignores_a_segment_entirely_before_zero():
     assert not p.to_mask([(-1.0, -0.5)], 100).any()
+
+
+def test_to_mask_keeps_later_segments_after_one_before_zero():
+    assert frames(p.to_mask([(-1.0, -0.5), (0.25, 0.5)], 100)) == list(range(25, 50))
 
 
 @pytest.mark.parametrize(

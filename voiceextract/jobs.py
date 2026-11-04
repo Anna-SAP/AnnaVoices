@@ -16,6 +16,8 @@ from .models import ROOT
 
 JOBS_DIR = Path(os.environ.get("AV_JOBS_DIR") or ROOT / "jobs")
 _lock = threading.Lock()
+# Windows opens these as devices in any folder, whatever their case
+_DEVICE_NAME = re.compile(r"con|prn|aux|nul|(com|lpt)[0-9¹²³]", re.IGNORECASE)
 
 
 def pid_alive(pid) -> bool:
@@ -44,13 +46,21 @@ def _slug(name: str) -> str:
     return s[:40] or "job"
 
 
+def _load(p: Path) -> dict:
+    """The record in ``p``; raises OSError or ValueError if it is missing or damaged."""
+    job = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(job, dict) or "id" not in job:
+        raise ValueError(f"not a job record: {p}")
+    return job
+
+
 class JobStore:
     def __init__(self, root: Path = JOBS_DIR):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
     def dir(self, job_id: str) -> Path:
-        if not re.fullmatch(r"[\w一-鿿-]+", job_id):
+        if not re.fullmatch(r"[\w一-鿿-]+", job_id) or (os.name == "nt" and _DEVICE_NAME.fullmatch(job_id)):
             raise KeyError(job_id)
         return self.root / job_id
 
@@ -75,16 +85,15 @@ class JobStore:
 
     def get(self, job_id: str) -> dict | None:
         try:
-            p = self.dir(job_id) / "job.json"
-        except KeyError:
+            return _load(self.dir(job_id) / "job.json")
+        except (KeyError, OSError, ValueError):  # illegal ID, no record, damaged record
             return None
-        if not p.exists():
-            return None
-        return json.loads(p.read_text(encoding="utf-8"))
 
     def update(self, job_id: str, **fields) -> dict:
         with _lock:
-            job = self.get(job_id) or {"id": job_id}
+            p = self.dir(job_id) / "job.json"
+            # a damaged record raises here rather than being overwritten by a partial one
+            job = _load(p) if p.exists() else {"id": job_id}
             job.update(fields)
             self._write(job)
         return job
@@ -93,8 +102,8 @@ class JobStore:
         jobs = []
         for p in self.root.glob("*/job.json"):
             try:
-                jobs.append(json.loads(p.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError):
+                jobs.append(_load(p))
+            except (OSError, ValueError):
                 continue
         return sorted(jobs, key=lambda j: -j.get("created", 0))
 

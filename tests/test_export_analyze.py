@@ -262,13 +262,24 @@ def test_analyze_saves_its_result_and_centroids(stages):
     assert np.array_equal(saved[0], stages["centroids"][1])  # S1 is cluster 1
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题 #6：没有语音时 np.stack 报错，用户只看到 numpy 的原始错误")
 def test_analyze_explains_a_recording_without_speech(stages):
     stages.update(clean=[], centroids={}, n_main=0)
     try:
         analyze(stages)
     except ValueError as e:
         assert "need at least one array" not in str(e)
+
+
+@pytest.mark.parametrize("found", [[], [clean(2, 0.0, 0.2)]], ids=["no-speech", "only-a-fragment"])
+def test_analyze_stops_before_transcribing_when_no_speech_is_usable(stages, monkeypatch, found):
+    def must_not_run(*args):
+        raise AssertionError("nothing to transcribe")
+
+    monkeypatch.setattr(p, "transcribe", must_not_run)
+    stages.update(clean=found, centroids={}, n_main=0)
+    with pytest.raises(ValueError, match="没有检测到可用的语音"):
+        analyze(stages)
+    assert not (stages["dir"] / "result.json").exists()
 
 
 def test_analyze_reuses_cached_stages(stages, monkeypatch):

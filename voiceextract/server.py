@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import shutil
 import tempfile
 import threading
@@ -121,6 +122,7 @@ def _job_or_404(job_id: str) -> dict:
 
 
 def _result_or_409(job_id: str) -> dict:
+    _job_or_404(job_id)
     p = store.dir(job_id) / "result.json"
     if not p.exists():
         raise HTTPException(409, "分析尚未完成")
@@ -131,6 +133,12 @@ async def _save_upload(upload: UploadFile, dest: Path) -> None:
     with open(dest, "wb") as f:
         while chunk := await upload.read(1 << 20):
             f.write(chunk)
+
+
+def _upload_suffix(filename: str | None, default: str) -> str:
+    """The upload's extension, or ``default`` if it is unusable in a file name."""
+    suffix = Path(filename or "").suffix.lower()
+    return suffix if re.fullmatch(r"\.[0-9a-z]{1,16}", suffix) else default
 
 
 # ----------------------------------------------------------------------------- API
@@ -153,15 +161,17 @@ async def create_job(
     separate: bool = Form(True),
     num_speakers: int = Form(0),
 ):
-    suffix = Path(file.filename or "input.mp4").suffix.lower() or ".mp4"
     opts = {"separate": separate, "num_speakers": max(0, min(20, num_speakers))}
     job = store.create(file.filename or "upload", opts)
-    src = store.dir(job["id"]) / f"source{suffix}"
-    await _save_upload(file, src)
-    info = pipeline.probe_media(src)
-    if not info["has_audio"]:
+    src = store.dir(job["id"]) / f"source{_upload_suffix(file.filename, '.mp4')}"
+    try:
+        await _save_upload(file, src)
+        info = pipeline.probe_media(src)
+        if not info["has_audio"]:
+            raise HTTPException(400, "无法识别该文件中的音轨")
+    except Exception:  # a job without a source would stay "queued" forever
         shutil.rmtree(store.dir(job["id"]), ignore_errors=True)
-        raise HTTPException(400, "无法识别该文件中的音轨")
+        raise
     store.update(job["id"], source_path=str(src), media=info)
     _analysis_q.put(job["id"])
     return store.get(job["id"])
@@ -210,8 +220,12 @@ _SERVABLE = {"previews", "thumbs", "export"}
 def job_file(job_id: str, path: str, download: bool = False):
     _job_or_404(job_id)
     d = store.dir(job_id).resolve()
-    p = (d / path).resolve()
-    if d not in p.parents or not (p.parent.name in _SERVABLE or p.name == "vocals_browse.mp3") or not p.is_file():
+    try:
+        p = (d / path).resolve()
+    except (OSError, ValueError):  # e.g. a NUL byte
+        raise HTTPException(404, "文件不存在") from None
+    rel = p.relative_to(d).parts if d in p.parents else ()
+    if not (rel == ("vocals_browse.mp3",) or (len(rel) == 2 and rel[0] in _SERVABLE)) or not p.is_file():
         raise HTTPException(404, "文件不存在")
     return FileResponse(p, filename=p.name if download else None)
 
@@ -222,9 +236,8 @@ def search(job_id: str, q: str):
 
 
 async def _with_temp_upload(upload: UploadFile, fn):
-    suffix = Path(upload.filename or "ref").suffix or ".bin"
     with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td) / f"ref{suffix}"
+        tmp = Path(td) / f"ref{_upload_suffix(upload.filename, '.bin')}"
         await _save_upload(upload, tmp)
         try:
             return fn(tmp)

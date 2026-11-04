@@ -157,13 +157,28 @@ def test_files_of_an_unknown_job(client, job, job_id):
 
 @pytest.mark.parametrize("job_id", ["export", "previews", "thumbs"])
 @pytest.mark.parametrize("name", ["job.json", "source.mp4", "result.json"])
-@pytest.mark.xfail(strict=True, reason="已知问题 #2：任务名与白名单目录同名时，任务根目录下的文件全部可下载")
 def test_files_whitelist_holds_for_jobs_named_like_a_folder(client, store, job_id, name):
     add_job(store, job_id)
     assert client.get(f"/api/jobs/{job_id}/files/{name}").status_code == 404
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题 #4：路径含 NUL 字节时 resolve() 抛 ValueError，返回 500")
+@pytest.mark.parametrize("job_id", ["export", "previews", "thumbs"])
+def test_files_keeps_serving_jobs_named_like_a_folder(client, store, job_id):
+    add_job(store, job_id)
+    assert client.get(f"/api/jobs/{job_id}/files/export/S1.mp3").content == b"exported"
+    assert client.get(f"/api/jobs/{job_id}/files/vocals_browse.mp3").content == b"vocals"
+
+
+@pytest.mark.parametrize(
+    "path", ["sub/export/S1.mp3", "export/sub/S1.mp3", "export/previews/S1.mp3", "sub/vocals_browse.mp3"]
+)
+def test_files_only_serves_the_top_of_the_allowed_folders(client, job, store, path):
+    target = store.dir("good") / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"private")
+    assert client.get(f"/api/jobs/good/files/{path}").status_code == 404
+
+
 def test_files_with_a_nul_byte(client, job):
     assert client.get("/api/jobs/good/files/previews%2fa%00b.mp3").status_code == 404
 
@@ -254,8 +269,7 @@ def test_upload_validation_errors(client, store, request_args):
 
 @ONLY_ON_WINDOWS
 @pytest.mark.parametrize("filename", ["a.m?4", "a.<b>", "a." + "x" * 400])
-@pytest.mark.xfail(strict=True, reason="已知问题 #3：Windows 不接受的扩展名返回 500，并留下永远 queued 的孤儿任务")
-def test_upload_with_an_unusable_suffix_is_refused_cleanly(client, store, has_audio, filename):
+def test_upload_with_an_unusable_suffix_is_handled_cleanly(client, store, has_audio, filename):
     r = client.post("/api/jobs", files={"file": (filename, b"data")})
     assert r.status_code < 500
     assert [j for j in store.list() if j["source_path"] is None] == []
@@ -263,10 +277,33 @@ def test_upload_with_an_unusable_suffix_is_refused_cleanly(client, store, has_au
 
 @ONLY_ON_WINDOWS
 @pytest.mark.parametrize("kind", ["audio", "image"])
-@pytest.mark.xfail(strict=True, reason="已知问题 #3：参考文件的扩展名不可用时同样返回 500")
 def test_match_with_an_unusable_suffix_is_refused_cleanly(client, job, kind):
     r = client.post(f"/api/jobs/good/match/{kind}", files={"file": ("a.m?4", b"x")})
     assert r.status_code < 500
+
+
+@pytest.mark.parametrize("filename", ["a.m?4", "a.<b>", "a.mp 4", "a.视频", "a." + "x" * 400])
+def test_upload_replaces_an_unusable_suffix(client, has_audio, filename):
+    src = Path(client.post("/api/jobs", files={"file": (filename, b"data")}).json()["source_path"])
+    assert src.name == "source.mp4"
+    assert src.read_bytes() == b"data"
+
+
+def test_match_replaces_an_unusable_suffix(client, job, monkeypatch):
+    seen = []
+    monkeypatch.setattr(pipeline, "match_audio", lambda job_dir, ref: seen.append(ref.suffix) or {})
+    assert client.post("/api/jobs/good/match/audio", files={"file": ("a.m?4", b"x")}).status_code == 200
+    assert seen == [".bin"]
+
+
+def test_a_failed_upload_leaves_no_job_behind(client, store, monkeypatch):
+    def no_ffmpeg(src):
+        raise FileNotFoundError("ffmpeg")
+
+    monkeypatch.setattr(pipeline, "probe_media", no_ffmpeg)
+    assert client.post("/api/jobs", files={"file": ("a.mp4", b"data")}).status_code == 500
+    assert list(store.root.iterdir()) == []
+    assert server._analysis_q.empty()
 
 
 # ------------------------------------------------------------------ job lifecycle
@@ -302,6 +339,13 @@ def test_unknown_jobs_are_404(client, method, suffix, body, job_id):
     assert client.request(method, f"/api/jobs/{job_id}{suffix}", json=body).status_code == 404
 
 
+@ONLY_ON_WINDOWS
+@pytest.mark.parametrize("job_id", ["NUL", "con", "COM1"])
+def test_device_names_are_unknown_jobs(client, job_id):
+    assert client.get(f"/api/jobs/{job_id}").status_code == 404
+    assert client.get(f"/api/jobs/{job_id}/search?q=x").status_code == 404
+
+
 @pytest.mark.parametrize("job_id", ["ghost", *ILLEGAL_JOB_URLS])
 @pytest.mark.parametrize(
     "method, suffix, kwargs",
@@ -312,15 +356,30 @@ def test_unknown_jobs_are_404(client, method, suffix, body, job_id):
         ("POST", "/match/image", {"files": {"file": ("a.jpg", b"x")}}),
     ],
 )
-@pytest.mark.xfail(strict=True, reason="已知问题 #1：_result_or_409 不检查任务，非法 ID 返回 500，不存在的任务返回 409")
 def test_unknown_jobs_are_404_on_result_endpoints(client, method, suffix, kwargs, job_id):
     assert client.request(method, f"/api/jobs/{job_id}{suffix}", **kwargs).status_code == 404
 
 
-@pytest.mark.xfail(strict=True, reason="已知问题 #5：job.json 损坏时 get() 抛 JSONDecodeError，返回 500")
 def test_a_corrupt_job_does_not_crash_its_page(client, job, store):
     (store.dir("good") / "job.json").write_text("{not json", encoding="utf-8")
     assert client.get("/api/jobs/good").status_code < 500
+
+
+@pytest.mark.parametrize(
+    "method, suffix, kwargs",
+    [
+        ("GET", "/exports", {}),
+        ("GET", "/search?q=x", {}),
+        ("GET", "/files/vocals_browse.mp3", {}),
+        ("POST", "/reanalyze", {"json": {}}),
+        ("PUT", "/names", {"json": {"S1": "甲"}}),
+        ("DELETE", "", {}),
+    ],
+)
+def test_a_corrupt_job_is_treated_as_missing(client, job, store, method, suffix, kwargs):
+    (store.dir("good") / "job.json").write_text("{not json", encoding="utf-8")
+    assert client.request(method, f"/api/jobs/good{suffix}", **kwargs).status_code == 404
+    assert (store.dir("good") / "job.json").read_text(encoding="utf-8") == "{not json"
 
 
 def test_get_includes_the_result_once_done(client, job):
@@ -644,6 +703,13 @@ def test_worker_records_a_failed_job_and_keeps_going(store, job, monkeypatch):
     run_worker(monkeypatch, "good", "good2")
     assert store.get("good")["status"] == "error"
     assert store.get("good")["error"] == "RuntimeError: boom"
+    assert store.get("good2")["status"] == "done"
+
+
+def test_worker_survives_a_job_with_a_corrupt_record(store, job, monkeypatch):
+    (store.dir("good") / "job.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(pipeline, "analyze", lambda *args: None)
+    run_worker(monkeypatch, "good", "good2")
     assert store.get("good2")["status"] == "done"
 
 
