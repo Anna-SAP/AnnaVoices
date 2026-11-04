@@ -666,6 +666,8 @@ def analyze(src: Path, job_dir: Path, opts: dict | None, report: Report) -> dict
         listed = {k for k in totals if k < n_main} | {k for k in minors if totals[k] >= min_minor}
     fragments = [s for s in clean if s["cluster"] not in listed]
     clean = [s for s in clean if s["cluster"] in listed]
+    if not clean:
+        raise ValueError("没有检测到可用的语音，请确认文件里有清晰的人声")
 
     # 5. asr
     r = stage("asr", labels["asr"])

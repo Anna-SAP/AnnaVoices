@@ -11,6 +11,7 @@ import pytest
 from voiceextract.jobs import JobStore, pid_alive
 
 ILLEGAL_IDS = ["", ".", "..", "../x", "..\\x", "a/b", "a\\b", "a b", "a.b", "a\n", "C:", "%2e%2e", "/etc", "C:\\Windows"]
+DAMAGED_RECORDS = [b"", b"{not json", b"\xff\xfe", b"null", b"[]", b"123", b"{}"]
 
 
 @pytest.fixture
@@ -102,6 +103,32 @@ def test_list_skips_corrupt_records_and_folders_without_one(s):
     (s.dir("broken") / "job.json").write_text("{not json", encoding="utf-8")
     s.dir("empty").mkdir()
     assert [j["id"] for j in s.list()] == ["ok"]
+
+
+def damage(s, job_id, data):
+    s.create("a.mp4", {}, job_id=job_id)
+    (s.dir(job_id) / "job.json").write_bytes(data)
+
+
+@pytest.mark.parametrize("data", DAMAGED_RECORDS)
+def test_get_treats_a_damaged_record_as_missing(s, data):
+    damage(s, "demo", data)
+    assert s.get("demo") is None
+
+
+@pytest.mark.parametrize("data", DAMAGED_RECORDS)
+def test_list_skips_a_damaged_record(s, data):
+    damage(s, "broken", data)
+    s.create("a.mp4", {}, job_id="ok")
+    assert [j["id"] for j in s.list()] == ["ok"]
+
+
+@pytest.mark.parametrize("data", DAMAGED_RECORDS)
+def test_update_does_not_overwrite_a_damaged_record(s, data):
+    damage(s, "demo", data)
+    with pytest.raises(ValueError):
+        s.update("demo", status="done")
+    assert (s.dir("demo") / "job.json").read_bytes() == data
 
 
 def test_records_are_stored_as_readable_utf8(s):
