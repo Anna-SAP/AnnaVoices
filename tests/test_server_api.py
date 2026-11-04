@@ -339,6 +339,13 @@ def test_unknown_jobs_are_404(client, method, suffix, body, job_id):
     assert client.request(method, f"/api/jobs/{job_id}{suffix}", json=body).status_code == 404
 
 
+@ONLY_ON_WINDOWS
+@pytest.mark.parametrize("job_id", ["NUL", "con", "COM1"])
+def test_device_names_are_unknown_jobs(client, job_id):
+    assert client.get(f"/api/jobs/{job_id}").status_code == 404
+    assert client.get(f"/api/jobs/{job_id}/search?q=x").status_code == 404
+
+
 @pytest.mark.parametrize("job_id", ["ghost", *ILLEGAL_JOB_URLS])
 @pytest.mark.parametrize(
     "method, suffix, kwargs",

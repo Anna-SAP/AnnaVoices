@@ -125,7 +125,7 @@ def loudnorm_filter(samples: np.ndarray, sr: int, target: float = -18.0, tp: flo
 def to_mask(segs, n: int) -> np.ndarray:
     m = np.zeros(n, bool)
     for s, e in segs:
-        m[max(0, int(s * FPS)) : min(n, int(math.ceil(e * FPS)))] = True
+        m[max(0, int(s * FPS)) : max(0, min(n, int(math.ceil(e * FPS))))] = True
     return m
 
 

@@ -11,6 +11,7 @@ import pytest
 from voiceextract.jobs import JobStore, pid_alive
 
 ILLEGAL_IDS = ["", ".", "..", "../x", "..\\x", "a/b", "a\\b", "a b", "a.b", "a\n", "C:", "%2e%2e", "/etc", "C:\\Windows"]
+ONLY_ON_WINDOWS = pytest.mark.skipif(os.name != "nt", reason="device names are only reserved on Windows")
 DAMAGED_RECORDS = [b"", b"{not json", b"\xff\xfe", b"null", b"[]", b"123", b"{}"]
 
 
@@ -30,12 +31,24 @@ def test_dir_keeps_legal_ids_directly_under_the_root(s, job_id):
     assert s.dir(job_id) == s.root / job_id
 
 
-@pytest.mark.skipif(os.name != "nt", reason="device names are only reserved on Windows")
+@ONLY_ON_WINDOWS
 @pytest.mark.parametrize("job_id", ["CON", "NUL", "AUX", "COM1"])
-@pytest.mark.xfail(strict=True, reason="已知问题 #8：Windows 保留设备名被当成合法任务 ID")
 def test_dir_rejects_windows_device_names(s, job_id):
     with pytest.raises(KeyError):
         s.dir(job_id)
+
+
+@ONLY_ON_WINDOWS
+@pytest.mark.parametrize("job_id", ["con", "Nul", "prn", "COM9", "lpt1", "LPT0", "COM¹", "lpt³"])
+def test_dir_rejects_device_names_in_any_case(s, job_id):
+    with pytest.raises(KeyError):
+        s.dir(job_id)
+    assert s.get(job_id) is None
+
+
+@pytest.mark.parametrize("job_id", ["console", "nul1", "com", "com10", "auxiliary", "CON_1", "lpt-1"])
+def test_dir_keeps_names_that_only_resemble_a_device(s, job_id):
+    assert s.dir(job_id) == s.root / job_id
 
 
 @pytest.mark.parametrize("job_id", ILLEGAL_IDS)
@@ -103,6 +116,13 @@ def test_list_skips_corrupt_records_and_folders_without_one(s):
     (s.dir("broken") / "job.json").write_text("{not json", encoding="utf-8")
     s.dir("empty").mkdir()
     assert [j["id"] for j in s.list()] == ["ok"]
+
+
+@ONLY_ON_WINDOWS
+def test_create_refuses_a_device_name_without_writing(s):
+    with pytest.raises(KeyError):
+        s.create("a.mp4", {}, job_id="NUL")
+    assert list(s.root.iterdir()) == []
 
 
 def damage(s, job_id, data):

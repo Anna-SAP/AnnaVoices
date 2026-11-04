@@ -16,6 +16,8 @@ from .models import ROOT
 
 JOBS_DIR = Path(os.environ.get("AV_JOBS_DIR") or ROOT / "jobs")
 _lock = threading.Lock()
+# Windows opens these as devices in any folder, whatever their case
+_DEVICE_NAME = re.compile(r"con|prn|aux|nul|(com|lpt)[0-9¹²³]", re.IGNORECASE)
 
 
 def pid_alive(pid) -> bool:
@@ -58,7 +60,7 @@ class JobStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def dir(self, job_id: str) -> Path:
-        if not re.fullmatch(r"[\w一-鿿-]+", job_id):
+        if not re.fullmatch(r"[\w一-鿿-]+", job_id) or (os.name == "nt" and _DEVICE_NAME.fullmatch(job_id)):
             raise KeyError(job_id)
         return self.root / job_id
 
