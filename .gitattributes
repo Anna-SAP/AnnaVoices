@@ -1,0 +1,4 @@
+* text=auto
+# cmd.exe misparses batch files with LF line endings, so keep CRLF on every platform
+*.bat text eol=crlf
+*.png binary

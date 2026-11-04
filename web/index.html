@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AnnaVoices · 目标说话人提取</title>
+  <link rel="stylesheet" href="style.css?v=5">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/new">
+      <span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <span>
+        <strong>AnnaVoices</strong>
+        <small>多人视频 · 目标说话人纯净语音提取</small>
+      </span>
+    </a>
+    <span id="health" class="pill">连接中…</span>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="btn primary block" href="#/new">＋ 新建任务</a>
+      <h4>历史任务</h4>
+      <ul id="job-list" class="job-list"></ul>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <div id="export-bar" class="export-bar hidden"></div>
+  <div id="drawer-backdrop" class="backdrop hidden"></div>
+  <aside id="drawer" class="drawer hidden" aria-label="片段列表"></aside>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <audio id="player" preload="metadata"></audio>
+
+  <script src="app.js?v=5"></script>
+</body>
+</html>

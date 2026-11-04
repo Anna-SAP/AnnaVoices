@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded models (voiceextract.models fetches them)
+models/
+
+# Runtime data: uploads, cached audio, exports
+jobs/
+output/
+
+# Audio and video never belong in this repo
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.avi
+*.flv
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.aac
+*.zip
+*.srt
+
+# Local tool settings
+.claude/
